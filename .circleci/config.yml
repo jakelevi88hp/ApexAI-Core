@@ -11,8 +11,7 @@ jobs:
       - python/install-packages
       - run:
           name: Run tests
-          command: pytest --junitxml=junit.xml || ((($? == 5)) && echo 'Did not find any
-            tests to run.')
+          command: pytest --junitxml=junit.xml || ((($? == 5)) && echo 'Did not find any tests to run.')
       - store_test_results:
           path: junit.xml
   deploy:
@@ -31,6 +30,22 @@ jobs:
           assertions: assertions.json
           metrics: eval_results.json
           results: test_results.xml
+  ios-build:
+    macos:
+      xcode: "15.3.0"
+    steps:
+      - checkout
+      - run:
+          name: Install Bundler
+          command: gem install bundler
+      - run:
+          name: Install Fastlane
+          command: bundle install || gem install fastlane
+      - run:
+          name: Fastlane Build
+          command: bundle exec fastlane build || fastlane build
+      - store_artifacts:
+          path: build
 workflows:
   build-and-test:
     jobs:
@@ -40,3 +55,6 @@ workflows:
   test-eval-workflow:
     jobs:
       - evals-test-assertions-job
+  ios-build-workflow:
+    jobs:
+      - ios-build
