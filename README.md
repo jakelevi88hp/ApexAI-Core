@@ -12,6 +12,8 @@ A Python-based code generation and execution framework that uses the Ollama API 
 - **Comprehensive Logging**: Uses structured logging with configurable levels
 - **Error Handling**: Robust error handling for API calls and code execution
 - **Extensible**: Modular design for easy extension and customization
+- **Multi-model Selection**: Automatically chooses between multiple Ollama models
+  based on the mission description
 
 ## Installation
 
@@ -192,6 +194,21 @@ from god_code_agent_ollama import GODCodeAgentOllama
 agent = GODCodeAgentOllama(max_cycles=5)
 mission = "Build a REST API client that can fetch weather data and cache the results"
 agent.recursive_build(mission)
+```
+
+## MultiModelAgent
+
+`MultiModelAgent` is a wrapper that selects between multiple Ollama models and
+offers a simple Tkinter GUI. The agent chooses a model based on keywords in the
+mission description and then delegates to `GODCodeAgentOllama` for execution.
+
+### Example
+
+```python
+from multi_model_agent import MultiModelAgent
+
+agent = MultiModelAgent()
+agent.launch_gui()
 ```
 
 ## Limitations
