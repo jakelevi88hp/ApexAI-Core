@@ -11,6 +11,7 @@ import unittest
 import logging
 import tkinter as tk
 import threading
+import subprocess
 from unittest.mock import patch, Mock, MagicMock, call
 
 # Add the parent directory to the path to import our module
@@ -304,4 +305,3 @@ class TestMultiModelAgentGUI(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-

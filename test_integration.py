@@ -10,7 +10,7 @@ import sys
 import unittest
 import tempfile
 import shutil
-from unittest.mock import patch, Mock
+from unittest.mock import patch, Mock, mock_open
 
 # Add the parent directory to the path to import our modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -219,4 +219,3 @@ class TestEnvironmentConfiguration(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
