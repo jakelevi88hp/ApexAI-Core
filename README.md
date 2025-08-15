@@ -11,6 +11,12 @@ ApexAI-Core is an AI automation stack for business operations. It provides a fra
 - **GUI Interface**: Simple graphical user interface for interacting with the agent
 - **CLI Interface**: Command-line interface for automation and scripting
 - **Dependency Management**: Automatic installation of missing dependencies
+- **Asynchronous Support**: Async/await syntax for better performance
+- **Dependency Injection**: Better testability and flexibility
+- **Metrics and Monitoring**: Prometheus and OpenTelemetry integration
+- **Caching**: In-memory and disk-based caching
+- **Security**: Code sandboxing and input validation
+- **Parallel Execution**: Thread pools, process pools, and async task management
 
 ## Installation
 
@@ -54,11 +60,20 @@ apexai --help
 # Run a mission
 apexai run "Create a Python function to calculate the factorial of a number"
 
+# Run a mission with async execution
+apexai run --async "Create a Python function to calculate the factorial of a number"
+
 # Launch the GUI
 apexai gui
 
 # Generate code without executing
 apexai generate "Create a Python function to calculate the factorial of a number" --output factorial.py
+
+# List available models
+apexai models
+
+# Execute code in a sandbox
+apexai sandbox my_script.py
 
 # Show version information
 apexai version
@@ -67,7 +82,7 @@ apexai version
 ### Python API
 
 ```python
-from apexai_core.agents import GODCodeAgentOllama, MultiModelAgent
+from apexai_core.agents import GODCodeAgentOllama, MultiModelAgent, AsyncAgent
 
 # Create a GODCodeAgentOllama instance
 agent = GODCodeAgentOllama(verbose=True)
@@ -83,6 +98,99 @@ multi_agent.run_mission("Create a Python function to calculate the factorial of 
 
 # Launch the GUI
 multi_agent.launch_gui()
+
+# Create an AsyncAgent instance
+async_agent = AsyncAgent(verbose=True)
+
+# Run a mission asynchronously
+import asyncio
+asyncio.run(async_agent.recursive_build_async("Create a Python function to calculate the factorial of a number"))
+```
+
+### Advanced Features
+
+#### Dependency Injection
+
+```python
+from apexai_core.di import container, get_service
+from apexai_core.agents import GODCodeAgentOllama
+
+# Register a custom implementation
+container.register(GODCodeAgentOllama, lambda: MyCustomAgent())
+
+# Get the service
+agent = get_service(GODCodeAgentOllama)
+```
+
+#### Metrics and Monitoring
+
+```python
+from apexai_core.metrics import metrics, timed, counted, traced
+
+# Use decorators for metrics
+@timed("my_function_duration_seconds")
+@counted("my_function_calls_total")
+@traced("my_function")
+def my_function():
+    # Function code here
+    pass
+
+# Use metrics directly
+metrics.increment_counter("my_counter", {"label": "value"})
+metrics.observe_histogram("my_histogram", 0.5, {"label": "value"})
+metrics.set_gauge("my_gauge", 42, {"label": "value"})
+```
+
+#### Caching
+
+```python
+from apexai_core.cache import memoized, disk_cached
+
+# Use decorators for caching
+@memoized
+def expensive_function():
+    # Function code here
+    pass
+
+@disk_cached(ttl=3600)  # Cache for 1 hour
+def expensive_function_with_ttl():
+    # Function code here
+    pass
+```
+
+#### Security
+
+```python
+from apexai_core.security import CodeSandbox, InputValidator, secure_execution_wrapper
+
+# Validate user input
+valid, error = InputValidator.validate_mission("User input")
+if not valid:
+    print(f"Invalid input: {error}")
+
+# Execute code in a sandbox
+sandbox = CodeSandbox()
+success, output = sandbox.execute_code("print('Hello, world!')")
+```
+
+#### Parallel Execution
+
+```python
+from apexai_core.parallel import task_manager, run_in_thread, run_in_process
+
+# Use decorators for parallel execution
+@run_in_thread
+def thread_function():
+    # Function code here
+    pass
+
+@run_in_process
+def process_function():
+    # Function code here
+    pass
+
+# Use task manager directly
+task = task_manager.submit_thread_task("task_id", my_function)
 ```
 
 ## Configuration
@@ -127,6 +235,19 @@ from apexai_core.agents import MultiModelAgent
 
 agent = MultiModelAgent()
 agent.launch_gui()
+```
+
+### Use Asynchronous Execution
+
+```python
+from apexai_core.agents import AsyncAgent
+import asyncio
+
+async def main():
+    agent = AsyncAgent()
+    await agent.recursive_build_async("Create a Python function to calculate the factorial of a number")
+
+asyncio.run(main())
 ```
 
 ## License

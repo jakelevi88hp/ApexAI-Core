@@ -2,8 +2,9 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# Install system dependencies for Ollama
-RUN apt-get update && apt-get install -y \
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -11,18 +12,30 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy the rest of the application
 COPY . .
 
-# Install Ollama
-RUN curl -fsSL https://ollama.com/install.sh | sh
+# Install the package
+RUN pip install --no-cache-dir -e .
 
-# Pull the required model
-RUN ollama pull codellama:instruct
+# Create a non-root user
+RUN useradd -m apexai
+USER apexai
 
-# Expose port for FastAPI
+# Create project directory
+RUN mkdir -p /home/apexai/apex_auto_project
+ENV PROJECT_ROOT=/home/apexai/apex_auto_project
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV OLLAMA_BASE_URL=http://ollama:11434
+ENV OLLAMA_MODEL=codellama:instruct
+ENV MAX_CYCLES=7
+
+# Expose ports for FastAPI apps
 EXPOSE 8000
 
-# Command to run the application
-CMD ["python", "god_code_agent_ollama.py"]
+# Command to run the CLI
+ENTRYPOINT ["apexai"]
+CMD ["--help"]
 
