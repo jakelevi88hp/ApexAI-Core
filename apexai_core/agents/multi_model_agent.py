@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 from typing import Dict, List, Tuple, Optional, Any, Union
 import threading
+import signal
 
 from apexai_core.agents.god_code_agent import GODCodeAgentOllama, OllamaAPIError, CodeGenerationError, CodeExecutionError
 
@@ -40,7 +41,7 @@ class MultiModelAgent:
     Agent that selects between multiple Ollama models and provides a GUI.
     
     This class wraps the GODCodeAgentOllama to provide model selection based on
-    mission content and a simple GUI for user interaction.
+    mission content and a simple GUI for interacting with the agent.
     
     Attributes:
         models (Dict[str, str]): Dictionary mapping model types to model names
@@ -326,9 +327,34 @@ class MultiModelAgent:
             
             mission_entry.bind("<Return>", on_enter)
             
+            # Handle keyboard interrupts gracefully
+            def signal_handler(sig, frame):
+                logger.info("Received keyboard interrupt, shutting down gracefully")
+                root.destroy()
+                sys.exit(0)
+                
+            # Register signal handler for SIGINT (Ctrl+C)
+            signal.signal(signal.SIGINT, signal_handler)
+            
+            # Add periodic check for interrupts
+            def check_interrupts():
+                root.after(100, check_interrupts)
+                
+            root.after(100, check_interrupts)
+            
             # Start the main loop
             logger.info("GUI initialized and ready")
-            root.mainloop()
+            
+            try:
+                root.mainloop()
+            except KeyboardInterrupt:
+                logger.info("Keyboard interrupt received, shutting down")
+                root.destroy()
+            except Exception as e:
+                logger.error(f"Error in GUI mainloop: {e}")
+                logger.debug(traceback.format_exc())
+                root.destroy()
+                raise
             
         except Exception as e:
             logger.error(f"Error in GUI: {e}")

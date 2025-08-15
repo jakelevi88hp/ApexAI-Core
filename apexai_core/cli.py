@@ -10,6 +10,7 @@ import json
 import argparse
 import logging
 import asyncio
+import signal
 from typing import List, Optional, Dict, Any
 
 from apexai_core.agents import GODCodeAgentOllama, MultiModelAgent, AsyncAgent
@@ -23,6 +24,26 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Global flag for graceful shutdown
+shutdown_requested = False
+
+
+def signal_handler(sig, frame):
+    """
+    Handle signals like SIGINT (Ctrl+C) gracefully.
+    
+    Args:
+        sig: Signal number
+        frame: Current stack frame
+    """
+    global shutdown_requested
+    if not shutdown_requested:
+        logger.info("Received interrupt signal, shutting down gracefully...")
+        shutdown_requested = True
+    else:
+        logger.warning("Forced shutdown requested, exiting immediately")
+        sys.exit(1)
 
 
 def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
@@ -173,9 +194,48 @@ async def async_main(args: argparse.Namespace) -> int:
                 ollama_model=args.ollama_model
             )
             
-            # Run the mission
-            await agent.recursive_build_async(args.mission, args.context)
-            return 0
+            # Run the mission with graceful shutdown support
+            try:
+                # Set up task for the mission
+                mission_task = asyncio.create_task(agent.recursive_build_async(args.mission, args.context))
+                
+                # Set up a task to check for shutdown requests
+                async def check_shutdown():
+                    while not shutdown_requested:
+                        await asyncio.sleep(0.1)
+                    logger.info("Shutdown requested, cancelling mission")
+                    mission_task.cancel()
+                
+                shutdown_task = asyncio.create_task(check_shutdown())
+                
+                # Wait for either task to complete
+                done, pending = await asyncio.wait(
+                    [mission_task, shutdown_task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                # Cancel any pending tasks
+                for task in pending:
+                    task.cancel()
+                
+                # Check if the mission completed successfully
+                if mission_task in done and not mission_task.cancelled():
+                    try:
+                        await mission_task
+                        return 0
+                    except asyncio.CancelledError:
+                        logger.info("Mission was cancelled")
+                        return 1
+                    except Exception as e:
+                        logger.error(f"Mission failed: {e}")
+                        return 1
+                
+                # If we get here, the mission was cancelled
+                return 1
+                
+            except asyncio.CancelledError:
+                logger.info("Mission was cancelled")
+                return 1
             
         elif args.command == "generate" and args.use_async:
             # Set up environment variables
@@ -195,15 +255,54 @@ async def async_main(args: argparse.Namespace) -> int:
                 ollama_model=args.ollama_model
             )
             
-            # Generate code
-            code = await agent.ollama_generate_async(args.mission)
-            
-            # Write code to file
-            with open(args.output, "w", encoding="utf-8") as f:
-                f.write(code)
+            # Generate code with graceful shutdown support
+            try:
+                # Set up task for code generation
+                generate_task = asyncio.create_task(agent.ollama_generate_async(args.mission))
                 
-            print(f"Generated code written to {args.output}")
-            return 0
+                # Set up a task to check for shutdown requests
+                async def check_shutdown():
+                    while not shutdown_requested:
+                        await asyncio.sleep(0.1)
+                    logger.info("Shutdown requested, cancelling code generation")
+                    generate_task.cancel()
+                
+                shutdown_task = asyncio.create_task(check_shutdown())
+                
+                # Wait for either task to complete
+                done, pending = await asyncio.wait(
+                    [generate_task, shutdown_task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                # Cancel any pending tasks
+                for task in pending:
+                    task.cancel()
+                
+                # Check if code generation completed successfully
+                if generate_task in done and not generate_task.cancelled():
+                    try:
+                        code = await generate_task
+                        
+                        # Write code to file
+                        with open(args.output, "w", encoding="utf-8") as f:
+                            f.write(code)
+                            
+                        print(f"Generated code written to {args.output}")
+                        return 0
+                    except asyncio.CancelledError:
+                        logger.info("Code generation was cancelled")
+                        return 1
+                    except Exception as e:
+                        logger.error(f"Code generation failed: {e}")
+                        return 1
+                
+                # If we get here, code generation was cancelled
+                return 1
+                
+            except asyncio.CancelledError:
+                logger.info("Code generation was cancelled")
+                return 1
             
         else:
             # Fall back to synchronous execution
@@ -275,8 +374,30 @@ def main_sync(args: argparse.Namespace) -> int:
                     ollama_model=os.environ["OLLAMA_MODEL"]
                 )
                 
-                # Run the mission
-                agent.recursive_build(args.mission, args.context)
+                # Run the mission with graceful shutdown support
+                try:
+                    # Start the mission in a separate thread
+                    import threading
+                    mission_thread = threading.Thread(
+                        target=agent.recursive_build,
+                        args=(args.mission, args.context)
+                    )
+                    mission_thread.daemon = True
+                    mission_thread.start()
+                    
+                    # Wait for the mission to complete or for shutdown to be requested
+                    while mission_thread.is_alive() and not shutdown_requested:
+                        mission_thread.join(0.1)
+                    
+                    # Check if shutdown was requested
+                    if shutdown_requested:
+                        logger.info("Shutdown requested, mission may not complete")
+                        return 1
+                    
+                    return 0
+                except Exception as e:
+                    logger.error(f"Mission failed: {e}")
+                    return 1
             else:
                 # Use the MultiModelAgent for automatic model selection
                 agent = MultiModelAgent(
@@ -286,11 +407,31 @@ def main_sync(args: argparse.Namespace) -> int:
                     ollama_base_url=args.ollama_base_url
                 )
                 
-                # Run the mission
-                agent.run_mission(args.mission, args.context)
+                # Run the mission with graceful shutdown support
+                try:
+                    # Start the mission in a separate thread
+                    import threading
+                    mission_thread = threading.Thread(
+                        target=agent.run_mission,
+                        args=(args.mission, args.context)
+                    )
+                    mission_thread.daemon = True
+                    mission_thread.start()
+                    
+                    # Wait for the mission to complete or for shutdown to be requested
+                    while mission_thread.is_alive() and not shutdown_requested:
+                        mission_thread.join(0.1)
+                    
+                    # Check if shutdown was requested
+                    if shutdown_requested:
+                        logger.info("Shutdown requested, mission may not complete")
+                        return 1
+                    
+                    return 0
+                except Exception as e:
+                    logger.error(f"Mission failed: {e}")
+                    return 1
                 
-            return 0
-            
         elif args.command == "gui":
             # Set up environment variables
             os.environ["PROJECT_ROOT"] = args.project_root
@@ -307,8 +448,15 @@ def main_sync(args: argparse.Namespace) -> int:
             )
             
             # Launch the GUI
-            agent.launch_gui()
-            return 0
+            try:
+                agent.launch_gui()
+                return 0
+            except KeyboardInterrupt:
+                logger.info("GUI interrupted by user")
+                return 0
+            except Exception as e:
+                logger.error(f"GUI failed: {e}")
+                return 1
             
         elif args.command == "generate" and not args.use_async:
             # Set up environment variables
@@ -328,15 +476,55 @@ def main_sync(args: argparse.Namespace) -> int:
                 ollama_model=args.ollama_model
             )
             
-            # Generate code
-            code = agent.ollama_generate(args.mission)
-            
-            # Write code to file
-            with open(args.output, "w", encoding="utf-8") as f:
-                f.write(code)
+            # Generate code with graceful shutdown support
+            try:
+                # Start code generation in a separate thread
+                import threading
+                import queue
                 
-            print(f"Generated code written to {args.output}")
-            return 0
+                result_queue = queue.Queue()
+                
+                def generate_code():
+                    try:
+                        code = agent.ollama_generate(args.mission)
+                        result_queue.put(("success", code))
+                    except Exception as e:
+                        result_queue.put(("error", str(e)))
+                
+                generate_thread = threading.Thread(target=generate_code)
+                generate_thread.daemon = True
+                generate_thread.start()
+                
+                # Wait for code generation to complete or for shutdown to be requested
+                while generate_thread.is_alive() and not shutdown_requested:
+                    generate_thread.join(0.1)
+                
+                # Check if shutdown was requested
+                if shutdown_requested:
+                    logger.info("Shutdown requested, code generation may not complete")
+                    return 1
+                
+                # Get the result
+                if not result_queue.empty():
+                    status, result = result_queue.get()
+                    
+                    if status == "success":
+                        # Write code to file
+                        with open(args.output, "w", encoding="utf-8") as f:
+                            f.write(result)
+                            
+                        print(f"Generated code written to {args.output}")
+                        return 0
+                    else:
+                        logger.error(f"Code generation failed: {result}")
+                        return 1
+                
+                logger.error("Code generation failed: No result returned")
+                return 1
+                
+            except Exception as e:
+                logger.error(f"Code generation failed: {e}")
+                return 1
             
         elif args.command == "sandbox":
             # Read the code from the file
@@ -372,6 +560,9 @@ def main_sync(args: argparse.Namespace) -> int:
             parse_args(["--help"])
             return 1
             
+    except KeyboardInterrupt:
+        logger.info("Operation interrupted by user")
+        return 1
     except Exception as e:
         logger.error(f"Error: {e}")
         return 1
@@ -387,11 +578,18 @@ def main(args: Optional[List[str]] = None) -> int:
     Returns:
         Exit code (0 for success, non-zero for failure)
     """
+    # Register signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    
     parsed_args = parse_args(args)
     
     # Check if we need to use async
     if (parsed_args.command == "run" or parsed_args.command == "generate") and getattr(parsed_args, "use_async", False):
-        return asyncio.run(async_main(parsed_args))
+        try:
+            return asyncio.run(async_main(parsed_args))
+        except KeyboardInterrupt:
+            logger.info("Operation interrupted by user")
+            return 1
     else:
         return main_sync(parsed_args)
 
