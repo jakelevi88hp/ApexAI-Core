@@ -4,11 +4,15 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+*.egg-info/
+dist/
+build/
 
 # Virtual environments
 venv/
 env/
 ENV/
+.env
 
 # IDE files
 .vscode/
@@ -23,3 +27,8 @@ Thumbs.db
 # Project-specific
 apex_auto_project/
 *.log
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
