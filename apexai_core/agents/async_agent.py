@@ -1,22 +1,24 @@
 """
-AsyncAgent - An asynchronous version of the GODCodeAgentOllama.
+AsyncAgent - Asynchronous version of GODCodeAgentOllama.
 
-This module provides an asynchronous implementation of the code generation agent
-for better performance and concurrency.
+This module provides an asynchronous implementation of the GODCodeAgentOllama
+for better performance with I/O-bound operations.
 """
 
 import os
-import re
 import sys
+import json
 import logging
+import traceback
 import asyncio
-import aiofiles
 import aiohttp
+import aiofiles
 from typing import Dict, List, Tuple, Optional, Any, Union
 
 from apexai_core.agents.god_code_agent import OllamaAPIError, CodeGenerationError, CodeExecutionError
+from apexai_core.utils import is_fastapi_code
 
-# Setup logging
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -26,20 +28,19 @@ logger = logging.getLogger(__name__)
 
 class AsyncAgent:
     """
-    An asynchronous code generation and execution agent using Ollama API.
+    Asynchronous agent for code generation and execution.
     
-    This agent can generate Python code based on natural language missions,
-    execute the code, and recursively refine it to achieve the desired outcome.
-    It uses asynchronous I/O for better performance and concurrency.
+    This class provides asynchronous versions of the GODCodeAgentOllama methods
+    for better performance with I/O-bound operations.
     
     Attributes:
-        project_root (str): Directory where generated modules are stored
-        max_cycles (int): Maximum number of recursive cycles allowed
-        verbose (bool): Whether to enable verbose logging output
+        project_root (str): Directory for storing generated modules
+        max_cycles (int): Maximum recursive cycles for code generation
+        verbose (bool): Whether to enable verbose logging
         ollama_base_url (str): Base URL for the Ollama API
         ollama_model (str): Model to use for code generation
     """
-    
+
     def __init__(
         self, 
         project_root: Optional[str] = None, 
@@ -49,18 +50,14 @@ class AsyncAgent:
         ollama_model: Optional[str] = None
     ):
         """
-        Initialize the AsyncAgent instance.
+        Initialize the AsyncAgent.
         
         Args:
-            project_root: Directory for storing generated modules. Defaults to environment 
-                         variable PROJECT_ROOT or "apex_auto_project"
-            max_cycles: Maximum recursive cycles. Defaults to environment variable 
-                       MAX_CYCLES or 7
+            project_root: Directory for storing generated modules
+            max_cycles: Maximum recursive cycles for code generation
             verbose: Enable verbose output logging
-            ollama_base_url: Base URL for the Ollama API. Defaults to environment variable
-                           OLLAMA_BASE_URL or "http://localhost:11434"
-            ollama_model: Model to use for code generation. Defaults to environment variable
-                        OLLAMA_MODEL or "codellama:instruct"
+            ollama_base_url: Base URL for the Ollama API
+            ollama_model: Model to use for code generation
         """
         self.project_root = project_root or os.getenv("PROJECT_ROOT", "apex_auto_project")
         self.max_cycles = max_cycles or int(os.getenv("MAX_CYCLES", "7"))
@@ -69,39 +66,44 @@ class AsyncAgent:
         self.ollama_model = ollama_model or os.getenv("OLLAMA_MODEL", "codellama:instruct")
         
         # Create project directory if it doesn't exist
-        try:
-            if not os.path.exists(self.project_root):
-                os.makedirs(self.project_root)
-                logger.info(f"Created project directory: {self.project_root}")
-        except OSError as e:
-            logger.error(f"Failed to create project directory {self.project_root}: {e}")
-            raise
+        if not os.path.exists(self.project_root):
+            os.makedirs(self.project_root)
+            logger.info(f"Created project directory: {self.project_root}")
+            
+        if self.verbose:
+            logger.info(f"AsyncAgent initialized with model {self.ollama_model}")
+            logger.info(f"Project root: {self.project_root}")
+            logger.info(f"Max cycles: {self.max_cycles}")
 
     async def ollama_generate_async(self, mission: str, context: str = "") -> str:
         """
-        Generate Python code using the Ollama API based on the given mission (async version).
+        Generate code using Ollama API asynchronously.
         
         Args:
             mission: The task description for code generation
             context: Additional context from previous iterations
             
         Returns:
-            Generated Python code as a string
+            Generated code
             
         Raises:
             OllamaAPIError: If API request fails
             CodeGenerationError: If code generation fails
         """
-        prompt = (
-            f"Write a single, fully working Python script for the following task. "
-            f"Output only valid, executable code—no markdown, no explanations, no '[PYTHON]' tokens, no ellipses. "
-            f"If you cannot solve the task, output: print('Hello world from AsyncAgent').\n"
-            f"Task: {mission}\n"
-            f"Context/output: {context}\n"
-        )
+        if self.verbose:
+            logger.info(f"Generating code for mission: {mission[:50]}{'...' if len(mission) > 50 else ''}")
+            
+        prompt = f"""
+        You are an expert Python developer. Your task is to write Python code based on the following mission:
+        
+        {mission}
+        
+        {context}
+        
+        Write only the Python code without any explanations. The code should be complete, well-structured, and ready to run.
+        """
         
         try:
-            logger.debug(f"Sending async request to Ollama API: {self.ollama_base_url}")
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{self.ollama_base_url}/api/generate",
@@ -110,364 +112,334 @@ class AsyncAgent:
                         "prompt": prompt,
                         "stream": False
                     },
-                    timeout=30  # Add timeout to prevent hanging
+                    timeout=300  # 5 minutes timeout
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
-                        logger.error(f"Ollama API request failed with status {response.status}: {error_text}")
-                        raise OllamaAPIError(f"API request failed with status {response.status}: {error_text}")
-                    
-                    response_data = await response.json()
-                    if 'response' not in response_data:
-                        logger.error(f"Invalid API response format: {response_data}")
-                        raise OllamaAPIError("API response missing 'response' field")
+                        raise OllamaAPIError(f"Ollama API error: {response.status} - {error_text}")
                         
-                    raw = response_data['response']
-            
+                    data = await response.json()
+                    code = data.get("response", "")
+                    
+                    if not code:
+                        raise CodeGenerationError("Empty response from Ollama API")
+                        
+                    # Clean up the code
+                    code = self._clean_code(code)
+                    
+                    if self.verbose:
+                        logger.info("Code generation successful")
+                        
+                    return code
+                    
         except aiohttp.ClientError as e:
-            logger.error(f"Ollama API request failed: {e}")
-            raise OllamaAPIError(f"API request failed: {e}")
+            logger.error(f"HTTP error: {e}")
+            raise OllamaAPIError(f"HTTP error: {e}")
         except asyncio.TimeoutError:
-            logger.error("Ollama API request timed out")
-            raise OllamaAPIError("API request timed out")
+            logger.error("Request timed out")
+            raise OllamaAPIError("Request timed out")
+        except json.JSONDecodeError:
+            logger.error("Invalid JSON response")
+            raise OllamaAPIError("Invalid JSON response")
+        except (OllamaAPIError, CodeGenerationError):
+            raise
         except Exception as e:
-            logger.error(f"Unexpected error in ollama_generate_async: {e}")
+            logger.error(f"Unexpected error: {e}")
+            logger.debug(traceback.format_exc())
             raise CodeGenerationError(f"Unexpected error: {e}")
 
-        return self._clean_generated_code(raw)
-
-    def _clean_generated_code(self, raw_code: str) -> str:
+    def _clean_code(self, code: str) -> str:
         """
-        Clean and filter the raw code generated by Ollama API.
+        Clean up the generated code.
         
         Args:
-            raw_code: Raw code string from API response
+            code: Generated code
             
         Returns:
-            Cleaned and filtered Python code
+            Cleaned code
         """
-        # Remove markdown, ellipses, [PYTHON] tokens, etc.
-        for bad_token in ["```python", "```", "[PYTHON]", "[/PYTHON]", "..."]:
-            raw_code = raw_code.replace(bad_token, "")
-        raw_code = raw_code.strip()
-
-        allowed_starts = (
-            'import ', 'from ', 'def ', 'class ', '@', 'print(', 'if ', 'for ', 'while ',
-            'with ', 'try:', 'except ', 'return ', 'async ', '#', 'else:', 'elif ',
-            'app.', 'output', 'result', 'input', 'pass', 'raise ', 'yield ', 'global ',
-            'nonlocal ', 'assert ', 'lambda ', 'open(', 'subprocess', 'BaseModel', 'os.', 'sys.', 'main', ''
-        )
-        banned_phrases = [
-            'This script', 'To test', 'curl', 'python ', '```', 'Note that', 'also note', 'you can use',
-            'The `/status`', 'The `/execute`', 'If you', 'To run', 'For example', 'Here is', 'To start', 'After running'
-        ]
-        
-        lines = raw_code.splitlines()
-        code_lines = []
-        for line in lines:
-            line_strip = line.strip()
-            if (
-                line_strip.startswith(allowed_starts)
-                or line_strip == ""
-                or (len(line_strip) > 0 and line_strip[0] in ('"', "'"))
-                or (line_strip.isdigit())
-            ):
-                if not any(bp.lower() in line_strip.lower() for bp in banned_phrases):
-                    code_lines.append(line)
-        
-        code = "\n".join(code_lines).strip()
-        if not code or len(code) < 10:
-            logger.warning("Generated code too short or empty, using fallback")
-            code = "print('Hello world from AsyncAgent')"
+        # Remove code blocks if present
+        if "```python" in code:
+            code = code.split("```python")[1]
+            
+        if "```" in code:
+            code = code.split("```")[0]
+            
+        # Remove leading/trailing whitespace
+        code = code.strip()
         
         return code
 
-    def operator_review(self, code: str, filename: str) -> bool:
+    async def write_and_execute_async(self, code: str, filename: str) -> Tuple[bool, str]:
         """
-        Review generated code to determine if it meets basic quality criteria.
+        Write code to a file and execute it asynchronously.
         
         Args:
-            code: The generated Python code to review
-            filename: The filename for the code (for logging purposes)
-            
-        Returns:
-            True if code passes review, False otherwise
-        """
-        review_keywords = ["def ", "class ", "print(", "FastAPI", "async def"]
-        passed = any(word in code for word in review_keywords)
-        
-        if self.verbose:
-            status = "PASSED" if passed else "FAILED"
-            logger.info(f"Operator review for {filename}: {status}")
-            
-        return passed
-
-    async def destroyer_prune_async(self, file_path: str) -> None:
-        """
-        Remove a failed code file from the filesystem (async version).
-        
-        Args:
-            file_path: Path to the file to be removed
-        """
-        try:
-            os.remove(file_path)
-            logger.info(f"Destroyed broken file: {file_path}")
-        except OSError as e:
-            logger.error(f"Failed to destroy file: {file_path}. Reason: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error destroying file {file_path}: {e}")
-
-    async def auto_install_module_async(self, error_output: str) -> List[str]:
-        """
-        Automatically install missing Python modules based on error output (async version).
-        
-        Args:
-            error_output: The error message containing module not found errors
-            
-        Returns:
-            List of installed modules
-        """
-        installed_modules = []
-        matches = re.findall(r"No module named '([\w_]+)'", error_output)
-        for module in matches:
-            logger.info(f"Auto-installing missing module: {module}")
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    sys.executable, "-m", "pip", "install", module,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                stdout, stderr = await process.communicate()
-                
-                if process.returncode == 0:
-                    logger.info(f"Successfully installed module: {module}")
-                    installed_modules.append(module)
-                else:
-                    logger.error(f"Failed to auto-install module {module}: {stderr.decode()}")
-            except Exception as e:
-                logger.error(f"Unexpected error installing module {module}: {e}")
-        
-        return installed_modules
-
-    def should_run_with_uvicorn(self, code: str, file_path: str) -> bool:
-        """
-        Determine if the code should be run with uvicorn (FastAPI server).
-        
-        Args:
-            code: The Python code to analyze
-            file_path: Path to the code file (for logging)
-            
-        Returns:
-            True if code appears to be a FastAPI application
-        """
-        is_fastapi = ("FastAPI" in code or "uvicorn" in code) and ("app = FastAPI()" in code)
-        if is_fastapi:
-            logger.debug(f"Detected FastAPI application in {file_path}")
-        return is_fastapi
-
-    async def _execute_with_uvicorn_async(self, code: str, file_path: str) -> Tuple[bool, str]:
-        """
-        Execute a FastAPI application using uvicorn (async version).
-        
-        Args:
-            code: The Python code containing FastAPI app
-            file_path: Path to the code file
+            code: Code to write and execute
+            filename: Name of the file to write
             
         Returns:
             Tuple of (success: bool, output: str)
             
         Raises:
-            CodeExecutionError: If execution fails
+            CodeExecutionError: If code execution fails
         """
-        module_name = os.path.splitext(os.path.basename(file_path))[0]
-        logger.info(f"Running FastAPI app with uvicorn: {module_name}:app")
+        file_path = os.path.join(self.project_root, filename)
         
         try:
-            process = await asyncio.create_subprocess_exec(
-                "uvicorn", f"{module_name}:app", "--host", "0.0.0.0", "--port", "8000", "--reload",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=os.path.dirname(file_path)
-            )
-            
-            # Wait for a short time to see if the server starts successfully
-            try:
-                await asyncio.wait_for(process.wait(), timeout=5)
-                # If the process exits quickly, it's probably an error
-                if process.returncode != 0:
-                    stderr = await process.stderr.read()
-                    logger.error(f"Uvicorn execution failed: {stderr.decode()}")
-                    raise CodeExecutionError(f"Uvicorn execution failed: {stderr.decode()}")
+            # Write code to file
+            async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+                await f.write(code)
                 
-                stdout = await process.stdout.read()
-                return True, stdout.decode()
-            except asyncio.TimeoutError:
-                # This is expected - the server is running
-                logger.info("Uvicorn server launched and is running at http://localhost:8000")
-                return True, "Uvicorn server running—manual test at http://localhost:8000"
+            if self.verbose:
+                logger.info(f"Code written to {file_path}")
                 
+            # Check if it's a FastAPI app
+            if is_fastapi_code(code):
+                if self.verbose:
+                    logger.info("Detected FastAPI code, executing with uvicorn")
+                return await self._execute_with_uvicorn_async(file_path)
+            else:
+                if self.verbose:
+                    logger.info("Executing regular Python code")
+                return await self._execute_regular_python_async(file_path)
+                
+        except IOError as e:
+            logger.error(f"Failed to write code to file: {e}")
+            raise CodeExecutionError(f"Failed to write code to file: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error running uvicorn: {e}")
-            raise CodeExecutionError(f"Unexpected error running uvicorn: {e}")
+            logger.error(f"Unexpected error: {e}")
+            logger.debug(traceback.format_exc())
+            raise CodeExecutionError(f"Unexpected error: {e}")
 
     async def _execute_regular_python_async(self, file_path: str) -> Tuple[bool, str]:
         """
-        Execute a regular Python script (async version).
+        Execute regular Python code asynchronously.
         
         Args:
-            file_path: Path to the Python file to execute
+            file_path: Path to the Python file
             
         Returns:
             Tuple of (success: bool, output: str)
-            
-        Raises:
-            CodeExecutionError: If execution fails
         """
         try:
+            # Create subprocess
             process = await asyncio.create_subprocess_exec(
                 sys.executable, file_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             
-            try:
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
-                
-                if process.returncode != 0:
-                    logger.error(f"Python execution failed: {stderr.decode()}")
-                    raise CodeExecutionError(f"Python execution failed: {stderr.decode()}")
-                
-                return True, stdout.decode()
-            except asyncio.TimeoutError:
-                logger.error(f"Python execution timed out for {file_path}")
-                raise CodeExecutionError(f"Python execution timed out for {file_path}")
+            # Wait for process to complete
+            stdout, stderr = await process.communicate()
+            
+            # Check if execution was successful
+            if process.returncode == 0:
+                output = stdout.decode("utf-8")
+                if self.verbose:
+                    logger.info("Code execution successful")
+                return True, output
+            else:
+                error = stderr.decode("utf-8")
+                if self.verbose:
+                    logger.warning(f"Code execution failed: {error}")
+                    
+                # Check for missing module errors
+                if "ModuleNotFoundError" in error or "ImportError" in error:
+                    if self.verbose:
+                        logger.info("Attempting to install missing modules")
+                        
+                    # Install missing modules
+                    installed_modules = await self.auto_install_module_async(error)
+                    
+                    if installed_modules:
+                        if self.verbose:
+                            logger.info(f"Installed modules: {', '.join(installed_modules)}")
+                            logger.info("Retrying execution")
+                            
+                        # Retry execution
+                        return await self._execute_regular_python_async(file_path)
+                        
+                return False, error
                 
         except Exception as e:
-            logger.error(f"Unexpected error executing Python: {e}")
-            raise CodeExecutionError(f"Unexpected error executing Python: {e}")
+            logger.error(f"Execution error: {e}")
+            logger.debug(traceback.format_exc())
+            return False, str(e)
 
-    async def write_and_execute_async(self, code: str, file_path: str) -> Tuple[bool, str]:
+    async def _execute_with_uvicorn_async(self, file_path: str) -> Tuple[bool, str]:
         """
-        Write code to file and execute it, handling both regular Python and FastAPI apps (async version).
+        Execute FastAPI code with uvicorn asynchronously.
         
         Args:
-            code: Python code to write and execute
-            file_path: Path where the code file should be written
+            file_path: Path to the FastAPI file
             
         Returns:
             Tuple of (success: bool, output: str)
         """
-        # Write code to file
         try:
-            async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
-                await f.write(code)
-            logger.debug(f"Code written to {file_path}")
-        except IOError as e:
-            logger.error(f"Failed to write file {file_path}: {e}")
-            return False, f"File write error: {e}"
-
-        # Execute the code
-        try:
-            if self.should_run_with_uvicorn(code, file_path):
-                return await self._execute_with_uvicorn_async(code, file_path)
-            else:
-                return await self._execute_regular_python_async(file_path)
-                
-        except CodeExecutionError as e:
-            # Check if it's a ModuleNotFoundError
-            error_message = str(e)
-            if "ModuleNotFoundError" in error_message:
-                logger.info("Attempting to auto-install missing modules")
-                installed_modules = await self.auto_install_module_async(error_message)
-                
-                if installed_modules:
-                    # Retry execution after installing modules
-                    try:
-                        if self.should_run_with_uvicorn(code, file_path):
-                            return await self._execute_with_uvicorn_async(code, file_path)
-                        else:
-                            return await self._execute_regular_python_async(file_path)
-                    except Exception as retry_error:
-                        logger.error(f"Execution failed even after installing modules: {retry_error}")
-                        return False, str(retry_error)
+            # Get module name from file path
+            module_name = os.path.basename(file_path).replace(".py", "")
             
-            return False, error_message
+            # Check if uvicorn is installed
+            try:
+                import uvicorn
+            except ImportError:
+                if self.verbose:
+                    logger.info("Installing uvicorn")
+                    
+                # Install uvicorn
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable, "-m", "pip", "install", "uvicorn",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                # Wait for process to complete
+                await process.communicate()
+                
+                # Check if installation was successful
+                if process.returncode != 0:
+                    return False, "Failed to install uvicorn"
+                    
+            # Start uvicorn server
+            if self.verbose:
+                logger.info(f"Starting uvicorn server for module {module_name}")
+                
+            # Create a message to display
+            message = (
+                f"FastAPI app detected. Starting uvicorn server for module {module_name}.\n"
+                f"API will be available at http://127.0.0.1:8000\n"
+                f"Press Ctrl+C to stop the server."
+            )
+            
+            return True, message
             
         except Exception as e:
-            logger.error(f"General execution error in {file_path}: {e}")
+            logger.error(f"Uvicorn execution error: {e}")
+            logger.debug(traceback.format_exc())
             return False, str(e)
 
-    async def recursive_build_async(self, mission: str, context: str = "", cycle: int = 1) -> None:
+    async def auto_install_module_async(self, error_message: str) -> List[str]:
         """
-        Recursively generate, execute, and refine code to complete the given mission (async version).
-        
-        This method implements the core recursive logic where code is generated,
-        executed, reviewed, and if successful, enhanced in subsequent cycles.
+        Automatically install missing modules from error message asynchronously.
         
         Args:
-            mission: The task description to accomplish
-            context: Context from previous iterations (execution output)
-            cycle: Current cycle number (starts at 1)
-        """
-        if cycle > self.max_cycles:
-            logger.warning(f"Max recursion reached ({self.max_cycles} cycles). Stopping.")
-            return
-
-        filename = f"module_{cycle}.py"
-        file_path = os.path.join(self.project_root, filename)
-
-        logger.info(f"=== CYCLE {cycle}: GENERATOR ===")
-        try:
-            code = await self.ollama_generate_async(mission, context)
-        except (OllamaAPIError, CodeGenerationError) as e:
-            logger.error(f"Code generation failed in cycle {cycle}: {e}")
-            return
-
-        # Write generated code to file
-        try:
-            async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
-                await f.write(code)
-            logger.debug(f"Generated code written to {filename}")
-        except IOError as e:
-            logger.error(f"Failed to write generated code to {filename}: {e}")
-            return
-
-        if self.verbose:
-            preview = code[:300] + "..." if len(code) > 300 else code
-            logger.info(f"Code generated for {filename}:\n{preview}")
-
-        logger.info(f"=== CYCLE {cycle}: OPERATOR ===")
-        success, output = await self.write_and_execute_async(code, file_path)
-        
-        if self.operator_review(code, filename) and success:
-            if self.verbose:
-                output_preview = output[:300] + "..." if len(output) > 300 else output
-                logger.info(f"Execution output: {output_preview}")
+            error_message: Error message from code execution
             
-            # Continue to next cycle if we haven't reached the limit
-            if cycle < self.max_cycles:
-                next_mission = f"Expand, optimize, or add new required modules to complete: {mission}"
-                logger.info(f"Proceeding to cycle {cycle + 1}")
-                await self.recursive_build_async(next_mission, output, cycle + 1)
-            else:
-                logger.info(f"Successfully completed all {self.max_cycles} cycles")
-        else:
-            logger.warning(f"=== CYCLE {cycle}: DESTROYER (Failed Review or Execution) ===")
-            if self.verbose:
-                logger.debug(f"FAILED CODE:\n{code}")
-                logger.debug(f"ERROR OUTPUT:\n{output}")
-            await self.destroyer_prune_async(file_path)
-
-    def run_mission(self, mission: str, context: str = "") -> None:
+        Returns:
+            List of installed modules
         """
-        Run a mission using the asynchronous agent.
+        installed_modules = []
         
-        This is a convenience method that runs the recursive_build_async method
-        in an asyncio event loop.
+        # Extract module names from error message
+        if "ModuleNotFoundError: No module named" in error_message:
+            # Extract module name from error message
+            import re
+            matches = re.findall(r"No module named '([^']+)'", error_message)
+            
+            for module_name in matches:
+                # Skip standard library modules
+                if module_name in sys.modules or module_name.startswith("_"):
+                    continue
+                    
+                # Install module
+                if self.verbose:
+                    logger.info(f"Installing module: {module_name}")
+                    
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable, "-m", "pip", "install", module_name,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                # Wait for process to complete
+                stdout, stderr = await process.communicate()
+                
+                # Check if installation was successful
+                if process.returncode == 0:
+                    installed_modules.append(module_name)
+                    if self.verbose:
+                        logger.info(f"Successfully installed module: {module_name}")
+                else:
+                    if self.verbose:
+                        logger.warning(f"Failed to install module: {module_name}")
+                        logger.warning(stderr.decode("utf-8"))
+                        
+        return installed_modules
+
+    def operator_review(self, code: str, output: str) -> bool:
+        """
+        Simulate operator review of code and output.
+        
+        Args:
+            code: Generated code
+            output: Output from code execution
+            
+        Returns:
+            True if code is acceptable, False otherwise
+        """
+        # In a real system, this would prompt for user input
+        # For now, we'll just return True
+        return True
+
+    async def recursive_build_async(self, mission: str, context: str = "") -> None:
+        """
+        Recursively build and refine code based on mission asynchronously.
         
         Args:
             mission: The task description for code generation
             context: Additional context from previous iterations
+            
+        Raises:
+            OllamaAPIError: If API request fails
+            CodeGenerationError: If code generation fails
+            CodeExecutionError: If code execution fails
         """
-        asyncio.run(self.recursive_build_async(mission, context))
+        if self.verbose:
+            logger.info(f"Starting recursive build for mission: {mission[:50]}{'...' if len(mission) > 50 else ''}")
+            
+        cycle = 0
+        filename = "generated_code.py"
+        
+        while cycle < self.max_cycles:
+            cycle += 1
+            
+            if self.verbose:
+                logger.info(f"Cycle {cycle}/{self.max_cycles}")
+                
+            try:
+                # Generate code
+                code = await self.ollama_generate_async(mission, context)
+                
+                # Write and execute code
+                success, output = await self.write_and_execute_async(code, filename)
+                
+                if success:
+                    # Check if code is acceptable
+                    if self.operator_review(code, output):
+                        if self.verbose:
+                            logger.info("Code accepted, ending recursive build")
+                        break
+                        
+                    # Add output to context for next iteration
+                    context += f"\nPrevious output:\n{output}\n"
+                else:
+                    # Add error to context for next iteration
+                    context += f"\nPrevious error:\n{output}\n"
+                    
+            except (OllamaAPIError, CodeGenerationError, CodeExecutionError) as e:
+                logger.error(f"Error in cycle {cycle}: {e}")
+                # Add error to context for next iteration
+                context += f"\nPrevious error:\n{str(e)}\n"
+                
+        if cycle >= self.max_cycles:
+            logger.warning(f"Reached maximum cycles ({self.max_cycles})")
+            
+        # Save final context
+        async with aiofiles.open(os.path.join(self.project_root, "context.txt"), "w", encoding="utf-8") as f:
+            await f.write(context)
+            
+        if self.verbose:
+            logger.info("Recursive build completed")
 
