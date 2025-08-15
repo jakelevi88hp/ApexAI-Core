@@ -1,256 +1,256 @@
-# GODCodeAgentOllama
+# ApexAI-Core
 
-A Python-based code generation and execution framework that uses the Ollama API to recursively generate, execute, and refine Python scripts for specified tasks.
+ApexAI-Core is an AI automation stack for business operations. It provides a framework for building AI-powered applications using local language models through Ollama.
 
 ## Features
 
-- **Recursive Code Generation**: Automatically generates Python code based on natural language descriptions
-- **Automatic Execution**: Executes generated code and provides feedback for improvements
-- **FastAPI Support**: Automatically detects and runs FastAPI applications using uvicorn
-- **Auto-dependency Installation**: Automatically installs missing Python modules
-- **Configurable**: Supports configuration via environment variables
-- **Comprehensive Logging**: Uses structured logging with configurable levels
-- **Error Handling**: Robust error handling for API calls and code execution
-- **Extensible**: Modular design for easy extension and customization
-- **Multi-model Selection**: Automatically chooses between multiple Ollama models
-  based on the mission description
+- **Code Generation**: Generate Python code based on natural language descriptions
+- **Recursive Refinement**: Automatically refine and improve generated code
+- **Multiple Models**: Support for multiple language models with automatic selection
+- **FastAPI Integration**: Automatic detection and execution of FastAPI applications
+- **GUI Interface**: Simple graphical user interface for interacting with the agent
+- **CLI Interface**: Command-line interface for automation and scripting
+- **Dependency Management**: Automatic installation of missing dependencies
+- **Asynchronous Support**: Async/await syntax for better performance
+- **Dependency Injection**: Better testability and flexibility
+- **Metrics and Monitoring**: Prometheus and OpenTelemetry integration
+- **Caching**: In-memory and disk-based caching
+- **Security**: Code sandboxing and input validation
+- **Parallel Execution**: Thread pools, process pools, and async task management
 
 ## Installation
 
-1. Clone the repository:
+### Prerequisites
+
+- Python 3.8 or higher
+- [Ollama](https://ollama.com/) - for running local language models
+
+### Install from Source
+
 ```bash
+# Clone the repository
 git clone https://github.com/jakelevi88hp/ApexAI-Core.git
 cd ApexAI-Core
+
+# Create a virtual environment (optional but recommended)
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install the package
+pip install -e .
 ```
 
-2. Install dependencies:
+### Install Required Models
+
+Make sure Ollama is running, then pull the required models:
+
 ```bash
-pip install -r requirements.txt
-```
-
-3. Ensure Ollama is running locally on port 11434 (or configure a different endpoint)
-
-## Configuration
-
-The agent can be configured using environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API base URL |
-| `OLLAMA_MODEL` | `codellama:instruct` | Ollama model to use for code generation |
-| `PROJECT_ROOT` | `apex_auto_project` | Directory for storing generated modules |
-| `MAX_CYCLES` | `7` | Maximum number of recursive cycles |
-
-Example:
-```bash
-export OLLAMA_BASE_URL="http://localhost:11434"
-export OLLAMA_MODEL="codellama:instruct"
-export PROJECT_ROOT="my_project"
-export MAX_CYCLES="5"
+ollama pull codellama:instruct
+ollama pull llama2
 ```
 
 ## Usage
 
-### Basic Usage
-
-```python
-from god_code_agent_ollama import GODCodeAgentOllama
-
-# Initialize the agent
-agent = GODCodeAgentOllama(max_cycles=4, verbose=True)
-
-# Define your mission
-mission = "Build a FastAPI server with a '/status' endpoint and a '/execute' endpoint that takes code and returns execution result."
-
-# Run the recursive build
-agent.recursive_build(mission)
-```
-
-### Advanced Configuration
-
-```python
-from god_code_agent_ollama import GODCodeAgentOllama
-
-# Custom configuration
-agent = GODCodeAgentOllama(
-    project_root="my_custom_project",
-    max_cycles=3,
-    verbose=True
-)
-
-# Complex mission with context
-mission = "Create a REST API with user authentication and data persistence"
-context = "Use SQLite for database and JWT for authentication"
-
-agent.recursive_build(mission, context)
-```
-
-### API Usage
-
-You can also use individual methods for specific tasks:
-
-```python
-from god_code_agent_ollama import GODCodeAgentOllama
-
-agent = GODCodeAgentOllama()
-
-# Generate code only
-code = agent.ollama_generate("Create a simple calculator function")
-
-# Review code
-is_valid = agent.operator_review(code, "calculator.py")
-
-# Execute code
-success, output = agent.write_and_execute(code, "calculator.py")
-```
-
-## Architecture
-
-The framework consists of several key components:
-
-### Core Components
-
-1. **Code Generator** (`ollama_generate`): Interfaces with Ollama API to generate Python code
-2. **Code Executor** (`write_and_execute`): Executes generated code with proper error handling
-3. **Code Reviewer** (`operator_review`): Reviews generated code for basic quality criteria
-4. **Dependency Manager** (`auto_install_module`): Automatically installs missing dependencies
-5. **Recursive Builder** (`recursive_build`): Orchestrates the recursive improvement process
-
-### Workflow
-
-1. **Generation Phase**: Generate Python code based on the mission description
-2. **Execution Phase**: Write code to file and execute it
-3. **Review Phase**: Evaluate the code and execution results
-4. **Iteration Phase**: If successful, enhance the code in the next cycle
-5. **Cleanup Phase**: Remove failed code files
-
-## Error Handling
-
-The framework includes comprehensive error handling:
-
-- **API Errors**: Graceful handling of Ollama API failures with fallback responses
-- **Execution Errors**: Automatic module installation for missing dependencies
-- **File System Errors**: Proper error messages for file I/O operations
-- **Timeout Handling**: Configurable timeouts for long-running operations
-
-## Testing
-
-Run the test suite to ensure everything is working correctly:
+### Command-Line Interface
 
 ```bash
-python -m unittest test_god_code_agent_ollama.py -v
+# Show help
+apexai --help
+
+# Run a mission
+apexai run "Create a Python function to calculate the factorial of a number"
+
+# Run a mission with async execution
+apexai run --async "Create a Python function to calculate the factorial of a number"
+
+# Launch the GUI
+apexai gui
+
+# Generate code without executing
+apexai generate "Create a Python function to calculate the factorial of a number" --output factorial.py
+
+# List available models
+apexai models
+
+# Execute code in a sandbox
+apexai sandbox my_script.py
+
+# Show version information
+apexai version
 ```
 
-The test suite includes:
-- Unit tests for all major components
-- Integration tests for complete workflows
-- Mocked external dependencies for reliable testing
-
-## Logging
-
-The framework uses Python's built-in logging module with structured logging:
+### Python API
 
 ```python
-import logging
+from apexai_core.agents import GODCodeAgentOllama, MultiModelAgent, AsyncAgent
 
-# Configure logging level
-logging.getLogger('god_code_agent_ollama').setLevel(logging.DEBUG)
+# Create a GODCodeAgentOllama instance
+agent = GODCodeAgentOllama(verbose=True)
+
+# Generate and execute code
+agent.recursive_build("Create a Python function to calculate the factorial of a number")
+
+# Create a MultiModelAgent instance
+multi_agent = MultiModelAgent(verbose=True)
+
+# Run a mission with automatic model selection
+multi_agent.run_mission("Create a Python function to calculate the factorial of a number")
+
+# Launch the GUI
+multi_agent.launch_gui()
+
+# Create an AsyncAgent instance
+async_agent = AsyncAgent(verbose=True)
+
+# Run a mission asynchronously
+import asyncio
+asyncio.run(async_agent.recursive_build_async("Create a Python function to calculate the factorial of a number"))
 ```
 
-Log levels:
-- `DEBUG`: Detailed information for debugging
-- `INFO`: General information about the execution
-- `WARNING`: Warning messages for potential issues
-- `ERROR`: Error messages for failed operations
+### Advanced Features
+
+#### Dependency Injection
+
+```python
+from apexai_core.di import container, get_service
+from apexai_core.agents import GODCodeAgentOllama
+
+# Register a custom implementation
+container.register(GODCodeAgentOllama, lambda: MyCustomAgent())
+
+# Get the service
+agent = get_service(GODCodeAgentOllama)
+```
+
+#### Metrics and Monitoring
+
+```python
+from apexai_core.metrics import metrics, timed, counted, traced
+
+# Use decorators for metrics
+@timed("my_function_duration_seconds")
+@counted("my_function_calls_total")
+@traced("my_function")
+def my_function():
+    # Function code here
+    pass
+
+# Use metrics directly
+metrics.increment_counter("my_counter", {"label": "value"})
+metrics.observe_histogram("my_histogram", 0.5, {"label": "value"})
+metrics.set_gauge("my_gauge", 42, {"label": "value"})
+```
+
+#### Caching
+
+```python
+from apexai_core.cache import memoized, disk_cached
+
+# Use decorators for caching
+@memoized
+def expensive_function():
+    # Function code here
+    pass
+
+@disk_cached(ttl=3600)  # Cache for 1 hour
+def expensive_function_with_ttl():
+    # Function code here
+    pass
+```
+
+#### Security
+
+```python
+from apexai_core.security import CodeSandbox, InputValidator, secure_execution_wrapper
+
+# Validate user input
+valid, error = InputValidator.validate_mission("User input")
+if not valid:
+    print(f"Invalid input: {error}")
+
+# Execute code in a sandbox
+sandbox = CodeSandbox()
+success, output = sandbox.execute_code("print('Hello, world!')")
+```
+
+#### Parallel Execution
+
+```python
+from apexai_core.parallel import task_manager, run_in_thread, run_in_process
+
+# Use decorators for parallel execution
+@run_in_thread
+def thread_function():
+    # Function code here
+    pass
+
+@run_in_process
+def process_function():
+    # Function code here
+    pass
+
+# Use task manager directly
+task = task_manager.submit_thread_task("task_id", my_function)
+```
+
+## Configuration
+
+ApexAI-Core can be configured using environment variables or a `.env` file:
+
+```
+# Ollama API Configuration
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=codellama:instruct
+
+# Agent Configuration
+MAX_CYCLES=7
+PROJECT_ROOT=apex_auto_project
+LOG_LEVEL=INFO
+```
 
 ## Examples
 
-### Example 1: Simple Web Server
+### Generate a Simple Function
 
 ```python
-from god_code_agent_ollama import GODCodeAgentOllama
+from apexai_core.agents import GODCodeAgentOllama
 
-agent = GODCodeAgentOllama(max_cycles=3)
-mission = "Create a simple HTTP server that serves 'Hello World' on port 8000"
-agent.recursive_build(mission)
+agent = GODCodeAgentOllama()
+agent.recursive_build("Create a Python function to calculate the factorial of a number")
 ```
 
-### Example 2: Data Processing Script
+### Generate a FastAPI Application
 
 ```python
-from god_code_agent_ollama import GODCodeAgentOllama
+from apexai_core.agents import GODCodeAgentOllama
 
-agent = GODCodeAgentOllama(max_cycles=4)
-mission = "Create a script that reads a CSV file, processes the data, and generates a summary report"
-context = "Use pandas for data manipulation and create visualizations"
-agent.recursive_build(mission, context)
+agent = GODCodeAgentOllama()
+agent.recursive_build("Create a FastAPI application with a '/status' endpoint and a '/execute' endpoint that takes code and returns execution result")
 ```
 
-### Example 3: API Client
+### Use the GUI
 
 ```python
-from god_code_agent_ollama import GODCodeAgentOllama
-
-agent = GODCodeAgentOllama(max_cycles=5)
-mission = "Build a REST API client that can fetch weather data and cache the results"
-agent.recursive_build(mission)
-```
-
-## MultiModelAgent
-
-`MultiModelAgent` is a wrapper that selects between multiple Ollama models and
-offers a simple Tkinter GUI. The agent chooses a model based on keywords in the
-mission description and then delegates to `GODCodeAgentOllama` for execution.
-
-### Example
-
-```python
-from multi_model_agent import MultiModelAgent
+from apexai_core.agents import MultiModelAgent
 
 agent = MultiModelAgent()
 agent.launch_gui()
 ```
 
-## Limitations
+### Use Asynchronous Execution
 
-- Requires a running Ollama instance with code generation models
-- Generated code quality depends on the underlying LLM model
-- Limited to Python code generation
-- Execution environment must have necessary permissions for file operations
+```python
+from apexai_core.agents import AsyncAgent
+import asyncio
 
-## Contributing
+async def main():
+    agent = AsyncAgent()
+    await agent.recursive_build_async("Create a Python function to calculate the factorial of a number")
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes with appropriate tests
-4. Ensure all tests pass
-5. Submit a pull request
+asyncio.run(main())
+```
 
 ## License
 
-This project is licensed under the BSD 3-Clause License. See the LICENSE file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Troubleshooting
-
-### Common Issues
-
-1. **Ollama Connection Error**: Ensure Ollama is running and accessible at the configured URL
-2. **Module Installation Failures**: Check pip permissions and internet connectivity
-3. **File Permission Errors**: Ensure the application has write permissions to the project directory
-4. **Timeout Issues**: Adjust timeout values for slow operations or large code generation tasks
-
-### Debug Mode
-
-Enable debug logging for troubleshooting:
-
-```python
-import logging
-logging.basicConfig(level=logging.DEBUG)
-
-from god_code_agent_ollama import GODCodeAgentOllama
-agent = GODCodeAgentOllama(verbose=True)
-```
-
-## Support
-
-For support, please open an issue on the GitHub repository or contact the maintainers.

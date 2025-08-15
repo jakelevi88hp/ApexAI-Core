@@ -12,9 +12,10 @@ import logging
 import traceback
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
-from typing import Dict, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, Union
+import threading
 
-from god_code_agent_ollama import GODCodeAgentOllama
+from apexai_core.agents.god_code_agent import GODCodeAgentOllama, OllamaAPIError, CodeGenerationError, CodeExecutionError
 
 # Configure logging if not already configured
 if not logging.getLogger().handlers:
@@ -27,6 +28,12 @@ if not logging.getLogger().handlers:
         ]
     )
 logger = logging.getLogger(__name__)
+
+
+class ModelSelectionError(Exception):
+    """Exception raised for errors in model selection."""
+    pass
+
 
 class MultiModelAgent:
     """
@@ -41,11 +48,14 @@ class MultiModelAgent:
         verbose (bool): Whether to enable verbose logging
     """
 
-    def __init__(self, 
-                 models: Optional[Dict[str, str]] = None, 
-                 project_root: Optional[str] = None, 
-                 max_cycles: Optional[int] = None, 
-                 verbose: bool = True):
+    def __init__(
+        self, 
+        models: Optional[Dict[str, str]] = None, 
+        project_root: Optional[str] = None, 
+        max_cycles: Optional[int] = None, 
+        verbose: bool = True,
+        ollama_base_url: Optional[str] = None
+    ):
         """
         Initialize the MultiModelAgent.
         
@@ -54,13 +64,19 @@ class MultiModelAgent:
             project_root: Directory for storing generated modules
             max_cycles: Maximum recursive cycles for code generation
             verbose: Enable verbose output logging
+            ollama_base_url: Base URL for the Ollama API
         """
         try:
             self.models = models or {
                 "code": "codellama:instruct",
                 "general": "llama2",
             }
-            self.agent = GODCodeAgentOllama(project_root, max_cycles, verbose)
+            self.agent = GODCodeAgentOllama(
+                project_root=project_root, 
+                max_cycles=max_cycles, 
+                verbose=verbose,
+                ollama_base_url=ollama_base_url
+            )
             self.verbose = verbose
             logger.info("MultiModelAgent initialized successfully")
             
@@ -81,6 +97,9 @@ class MultiModelAgent:
             
         Returns:
             The name of the selected model
+            
+        Raises:
+            ModelSelectionError: If model selection fails
         """
         try:
             mission_lower = mission.lower()
@@ -101,8 +120,7 @@ class MultiModelAgent:
         except Exception as e:
             logger.error(f"Error in model selection: {e}")
             logger.debug(traceback.format_exc())
-            # Fall back to general model on error
-            return self.models["general"]
+            raise ModelSelectionError(f"Failed to select model: {e}")
 
     def run_mission(self, mission: str, context: str = "") -> None:
         """
@@ -111,10 +129,17 @@ class MultiModelAgent:
         Args:
             mission: The task description for code generation
             context: Additional context from previous iterations
+            
+        Raises:
+            ValueError: If mission is empty
+            ModelSelectionError: If model selection fails
+            OllamaAPIError: If API request fails
+            CodeGenerationError: If code generation fails
+            CodeExecutionError: If code execution fails
         """
         if not mission:
             logger.warning("Empty mission provided, aborting")
-            return
+            raise ValueError("Mission cannot be empty")
             
         try:
             logger.info(f"Starting mission: {mission[:50]}{'...' if len(mission) > 50 else ''}")
@@ -128,8 +153,11 @@ class MultiModelAgent:
             self.agent.recursive_build(mission, context)
             logger.info("Mission completed successfully")
             
-        except Exception as e:
+        except (ModelSelectionError, OllamaAPIError, CodeGenerationError, CodeExecutionError) as e:
             logger.error(f"Mission failed: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in mission: {e}")
             logger.debug(traceback.format_exc())
             raise
 
@@ -177,19 +205,29 @@ class MultiModelAgent:
             
         Returns:
             Generated improvement code
+            
+        Raises:
+            OllamaAPIError: If API request fails
+            CodeGenerationError: If code generation fails
         """
         try:
             logger.info(f"Generating improvement for: {mission[:50]}{'...' if len(mission) > 50 else ''}")
             improvement = self.agent.ollama_generate(f"Improve the agent code: {mission}")
             return improvement
-        except Exception as e:
+        except (OllamaAPIError, CodeGenerationError) as e:
             logger.error(f"Failed to generate improvement: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in generate_improvement: {e}")
             logger.debug(traceback.format_exc())
-            return f"# Error generating improvement: {e}"
+            raise CodeGenerationError(f"Unexpected error: {e}")
 
     def launch_gui(self) -> None:
         """
         Launch a Tkinter GUI with controls for mission execution and self-update.
+        
+        Raises:
+            RuntimeError: If GUI initialization fails
         """
         try:
             logger.info("Launching MultiModelAgent GUI")
@@ -245,8 +283,7 @@ class MultiModelAgent:
                 status_var.set("Running mission...")
                 try:
                     # Run in a separate thread to avoid freezing the GUI
-                    import threading
-                    thread = threading.Thread(target=lambda: self.run_mission(mission))
+                    thread = threading.Thread(target=lambda: self._run_mission_thread(mission))
                     thread.daemon = True
                     thread.start()
                     status_var.set("Mission started")
@@ -283,6 +320,12 @@ class MultiModelAgent:
                 
             root.protocol("WM_DELETE_WINDOW", on_closing)
             
+            # Bind Enter key to run mission
+            def on_enter(event):
+                run_action()
+            
+            mission_entry.bind("<Return>", on_enter)
+            
             # Start the main loop
             logger.info("GUI initialized and ready")
             root.mainloop()
@@ -291,16 +334,19 @@ class MultiModelAgent:
             logger.error(f"Error in GUI: {e}")
             logger.debug(traceback.format_exc())
             messagebox.showerror("Fatal Error", f"GUI initialization failed: {e}")
-            sys.exit(1)
+            raise RuntimeError(f"GUI initialization failed: {e}")
+    
+    def _run_mission_thread(self, mission: str) -> None:
+        """
+        Run a mission in a separate thread for the GUI.
+        
+        Args:
+            mission: The task description for code generation
+        """
+        try:
+            self.run_mission(mission)
+        except Exception as e:
+            logger.error(f"Mission thread failed: {e}")
+            # We can't show a messagebox here because it's in a separate thread
+            # The error is already logged
 
-
-if __name__ == "__main__":
-    try:
-        logger.info("Starting MultiModelAgent application")
-        agent = MultiModelAgent()
-        agent.launch_gui()
-    except Exception as e:
-        logger.critical(f"Application failed to start: {e}")
-        logger.debug(traceback.format_exc())
-        print(f"Fatal error: {e}")
-        sys.exit(1)
